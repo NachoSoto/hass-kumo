@@ -210,7 +210,10 @@ class KumoThermostat(CoordinatedKumoEntity, ClimateEntity):
     @property
     def supported_features(self):
         """Return the list of supported features."""
-        return self._supported_features
+        features = self._supported_features
+        if self._has_auto_setpoints:
+            features |= ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
+        return features
 
     @property
     def _use_fahrenheit(self):
@@ -275,7 +278,10 @@ class KumoThermostat(CoordinatedKumoEntity, ClimateEntity):
     @property
     def hvac_modes(self):
         """Return the list of available operation modes."""
-        return self._hvac_modes
+        modes = list(self._hvac_modes)
+        if self._has_auto_setpoints and HVACMode.HEAT_COOL not in modes:
+            modes.append(HVACMode.HEAT_COOL)
+        return modes
 
     @property
     def fan_mode(self):
@@ -369,6 +375,17 @@ class KumoThermostat(CoordinatedKumoEntity, ClimateEntity):
         if self._use_fahrenheit:
             temp = c_to_f(temp)
         self._target_temperature_low = temp
+
+    @property
+    def _has_auto_setpoints(self):
+        """Return whether this unit currently exposes dual auto-mode setpoints."""
+        return (
+            self._hvac_mode == HVACMode.HEAT_COOL
+            and (
+                self._target_temperature_low is not None
+                or self._target_temperature_high is not None
+            )
+        )
 
     @property
     def battery_percent(self):
