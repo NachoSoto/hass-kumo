@@ -87,7 +87,6 @@ class KumoCloudRuntimeCoordinator(DataUpdateCoordinator):
                     "cloud_operation_mode": operation_mode,
                     "cloud_previous_operation_mode": adapter.get("previousOperationMode"),
                     "cloud_updated_at": adapter.get("updatedAt"),
-                    "running_state": running_state_from_cloud(power, operation_mode),
                 }
 
         return runtime_by_serial, {
@@ -138,28 +137,6 @@ class KumoCloudRuntimeRequestLogger:
             entry["error_type"] = type(error).__name__
             entry["error"] = str(error)[:300]
         self._logger.info(json.dumps(entry, sort_keys=True, separators=(",", ":")))
-
-
-def running_state_from_cloud(power: Any, operation_mode: Any) -> str:
-    """Return actual equipment activity from cloud power plus mode."""
-    try:
-        is_powered = int(power) > 0
-    except (TypeError, ValueError):
-        is_powered = bool(power)
-
-    if not is_powered:
-        return "idle"
-
-    mode = str(operation_mode or "").strip().lower()
-    if mode in {"heat", "autoheat"}:
-        return "heating"
-    if mode in {"cool", "autocool"}:
-        return "cooling"
-    if mode == "dry":
-        return "drying"
-    if mode in {"vent", "fan", "fan_only"}:
-        return "fan"
-    return "running"
 
 
 def elapsed_ms(started_at: float) -> int:

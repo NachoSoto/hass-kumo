@@ -42,11 +42,12 @@ ATTR_DEFROST = "defrost"
 ATTR_RSSI = "rssi"
 ATTR_SENSOR_RSSI = "sensor_rssi"
 ATTR_RUNSTATE = "runstate"
+ATTR_HOT_ADJUST = "hot_adjust"
+ATTR_RUNNING_STATE = "running_state"
 ATTR_CLOUD_POWER = "cloud_power"
 ATTR_CLOUD_OPERATION_MODE = "cloud_operation_mode"
 ATTR_CLOUD_PREVIOUS_OPERATION_MODE = "cloud_previous_operation_mode"
 ATTR_CLOUD_UPDATED_AT = "cloud_updated_at"
-ATTR_RUNNING_STATE = "running_state"
 EVENT_CLOUD_RUNTIME_UPDATED = "kumo_cloud_runtime_updated"
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
@@ -121,6 +122,7 @@ class KumoThermostat(CoordinatedKumoEntity, ClimateEntity):
     _update_properties = [
         "current_humidity",
         "hvac_mode",
+        "hot_adjust",
         "hvac_action",
         "fan_mode",
         "swing_mode",
@@ -134,6 +136,7 @@ class KumoThermostat(CoordinatedKumoEntity, ClimateEntity):
         "rssi",
         "sensor_rssi",
         "runstate",
+        "running_state",
     ]
 
     _enable_turn_on_off_backwards_compatibility = False # can be removed once 2024.12 is no longer supported
@@ -160,6 +163,8 @@ class KumoThermostat(CoordinatedKumoEntity, ClimateEntity):
         self._rssi = None
         self._sensor_rssi = None
         self._runstate = None
+        self._hot_adjust = None
+        self._running_state = None
         self._fan_modes = self._pykumo.get_fan_speeds()
         self._swing_modes = self._pykumo.get_vane_directions()
         self._hvac_modes = [HVACMode.OFF, HVACMode.COOL]
@@ -291,16 +296,16 @@ class KumoThermostat(CoordinatedKumoEntity, ClimateEntity):
 
     def _update_hvac_action(self):
         """Refresh cached hvac action."""
-        standby = self._pykumo.get_standby()
-        if standby:
-            result = HVACAction.IDLE
-        else:
-            mode = self._pykumo.get_mode()
-            try:
-                result = KUMO_STATE_TO_HA_ACTION[mode]
-            except KeyError:
-                result = None
-        self._hvac_action = result
+        running_state = self._running_state_from_hot_adjust()
+        if running_state == HVACAction.IDLE:
+            self._hvac_action = HVACAction.IDLE
+            return
+
+        mode = self._pykumo.get_mode()
+        try:
+            self._hvac_action = KUMO_STATE_TO_HA_ACTION[mode]
+        except KeyError:
+            self._hvac_action = None
 
     @property
     def hvac_modes(self):
@@ -464,6 +469,43 @@ class KumoThermostat(CoordinatedKumoEntity, ClimateEntity):
         runstate = self._pykumo.get_runstate()
         self._runstate = runstate
 
+    @property
+    def hot_adjust(self):
+        """Return whether the unit is actively adjusting temperature."""
+        return self._hot_adjust
+
+    def _update_hot_adjust(self):
+        """Refresh the cached hot_adjust attribute."""
+        self._hot_adjust = self._pykumo.get_status().get("hotAdjust")
+
+    @property
+    def running_state(self):
+        """Return actual running state derived from local unit demand."""
+        return self._running_state
+
+    def _update_running_state(self):
+        """Refresh actual running state from hot_adjust and current mode."""
+        running_state = self._running_state_from_hot_adjust()
+        self._running_state = str(running_state) if running_state is not None else None
+
+    def _running_state_from_hot_adjust(self):
+        """Map the local hotAdjust bit to an actual heat/cool/idle state."""
+        if self._pykumo.get_standby():
+            return HVACAction.IDLE
+        if self._hot_adjust is not True:
+            return HVACAction.IDLE
+
+        mode = self._pykumo.get_mode()
+        if mode in (KUMO_STATE_HEAT, KUMO_STATE_AUTO_HEAT):
+            return HVACAction.HEATING
+        if mode in (KUMO_STATE_COOL, KUMO_STATE_AUTO_COOL):
+            return HVACAction.COOLING
+        if mode == KUMO_STATE_DRY:
+            return HVACAction.DRYING
+        if mode == KUMO_STATE_VENT:
+            return HVACAction.FAN
+        return HVACAction.IDLE
+
     def _cloud_runtime(self):
         if not self._cloud_runtime_coordinator:
             return {}
@@ -499,13 +541,16 @@ class KumoThermostat(CoordinatedKumoEntity, ClimateEntity):
             attr[ATTR_SENSOR_RSSI] = self._sensor_rssi
         if self._runstate is not None:
             attr[ATTR_RUNSTATE] = self._runstate
+        if self._hot_adjust is not None:
+            attr[ATTR_HOT_ADJUST] = self._hot_adjust
+        if self._running_state is not None:
+            attr[ATTR_RUNNING_STATE] = self._running_state
         cloud_runtime = self._cloud_runtime()
         for source_key, attr_key in (
             ("cloud_power", ATTR_CLOUD_POWER),
             ("cloud_operation_mode", ATTR_CLOUD_OPERATION_MODE),
             ("cloud_previous_operation_mode", ATTR_CLOUD_PREVIOUS_OPERATION_MODE),
             ("cloud_updated_at", ATTR_CLOUD_UPDATED_AT),
-            ("running_state", ATTR_RUNNING_STATE),
         ):
             value = cloud_runtime.get(source_key)
             if value is not None:
