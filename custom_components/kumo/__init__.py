@@ -12,6 +12,7 @@ from homeassistant.util.json import load_json
 from homeassistant.helpers.json import save_json
 
 from .coordinator import KumoDataUpdateCoordinator
+from .cloud_runtime import KumoCloudRuntimeCoordinator
 from .const import (
     CONF_CONNECT_TIMEOUT,
     CONF_PREFER_CACHE,
@@ -19,6 +20,7 @@ from .const import (
     DHCP_DISCOVERED_KEY,
     DOMAIN,
     KUMO_CONFIG_CACHE,
+    KUMO_CLOUD_RUNTIME_COORDINATOR,
     KUMO_DATA,
     KUMO_DATA_COORDINATORS,
     PLATFORMS,
@@ -88,6 +90,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     if account:
         hass.data[DOMAIN][entry.entry_id][KUMO_DATA] = KumoCloudSettings(account, entry.data, entry.options)
+        cloud_runtime = KumoCloudRuntimeCoordinator(hass, username, password)
+        hass.data[DOMAIN][entry.entry_id][KUMO_CLOUD_RUNTIME_COORDINATOR] = cloud_runtime
+        await cloud_runtime.async_request_refresh()
 
         # Create a data coordinator for each Kumo device
         hass.data[DOMAIN][entry.entry_id].setdefault(KUMO_DATA_COORDINATORS, {})

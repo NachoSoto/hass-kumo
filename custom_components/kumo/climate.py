@@ -29,7 +29,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_BATTERY_LEVEL, ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 
-from .const import KUMO_DATA, KUMO_DATA_COORDINATORS
+from .const import KUMO_CLOUD_RUNTIME_COORDINATOR, KUMO_DATA, KUMO_DATA_COORDINATORS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,6 +42,12 @@ ATTR_DEFROST = "defrost"
 ATTR_RSSI = "rssi"
 ATTR_SENSOR_RSSI = "sensor_rssi"
 ATTR_RUNSTATE = "runstate"
+ATTR_CLOUD_POWER = "cloud_power"
+ATTR_CLOUD_OPERATION_MODE = "cloud_operation_mode"
+ATTR_CLOUD_PREVIOUS_OPERATION_MODE = "cloud_previous_operation_mode"
+ATTR_CLOUD_UPDATED_AT = "cloud_updated_at"
+ATTR_RUNNING_STATE = "running_state"
+EVENT_CLOUD_RUNTIME_UPDATED = "kumo_cloud_runtime_updated"
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     {
@@ -96,12 +102,13 @@ async def async_setup_entry(
     """Set up the Kumo thermostats."""
     account = hass.data[DOMAIN][entry.entry_id][KUMO_DATA].get_account()
     coordinators = hass.data[DOMAIN][entry.entry_id][KUMO_DATA_COORDINATORS]
+    cloud_runtime_coordinator = hass.data[DOMAIN][entry.entry_id].get(KUMO_CLOUD_RUNTIME_COORDINATOR)
 
     entities = []
     indoor_unit_serials = await hass.async_add_executor_job(account.get_indoor_units)
     for serial in indoor_unit_serials:
         coordinator = coordinators[serial]
-        entities.append(KumoThermostat(coordinator))
+        entities.append(KumoThermostat(coordinator, cloud_runtime_coordinator))
         _LOGGER.debug("Adding entity: %s", coordinator.get_device().get_name())
     if not entities:
         raise ConfigEntryNotReady("Kumo integration found no indoor units")
@@ -131,11 +138,12 @@ class KumoThermostat(CoordinatedKumoEntity, ClimateEntity):
 
     _enable_turn_on_off_backwards_compatibility = False # can be removed once 2024.12 is no longer supported
 
-    def __init__(self, coordinator: KumoDataUpdateCoordinator):
+    def __init__(self, coordinator: KumoDataUpdateCoordinator, cloud_runtime_coordinator=None):
         """Initialize the thermostat."""
 
         super().__init__(coordinator)
         coordinator.add_update_method(self.update)
+        self._cloud_runtime_coordinator = cloud_runtime_coordinator
         self._name = self._pykumo.get_name()
         self._target_temperature = None
         self._target_temperature_low = None
@@ -187,6 +195,25 @@ class KumoThermostat(CoordinatedKumoEntity, ClimateEntity):
         """Return unique id"""
         # For backwards compatibility, this ID is considered the primary
         return self._identifier
+
+    async def async_added_to_hass(self):
+        """Register cloud runtime updates for this entity."""
+        await super().async_added_to_hass()
+        if self._cloud_runtime_coordinator:
+            self.async_on_remove(
+                self._cloud_runtime_coordinator.async_add_listener(self._handle_cloud_runtime_update)
+            )
+
+    def _handle_cloud_runtime_update(self):
+        """Write state and announce a cloud-runtime sample tick."""
+        self.async_write_ha_state()
+        self.hass.bus.async_fire(
+            EVENT_CLOUD_RUNTIME_UPDATED,
+            {
+                "entity_id": self.entity_id,
+                "serial": self._identifier,
+            },
+        )
 
     async def update(self):
         """Call from HA to trigger a refresh of cached state."""
@@ -437,6 +464,15 @@ class KumoThermostat(CoordinatedKumoEntity, ClimateEntity):
         runstate = self._pykumo.get_runstate()
         self._runstate = runstate
 
+    def _cloud_runtime(self):
+        if not self._cloud_runtime_coordinator:
+            return {}
+        data = self._cloud_runtime_coordinator.data or {}
+        runtime = data.get(self._identifier)
+        if isinstance(runtime, dict):
+            return runtime
+        return {}
+
     @property
     def defrost(self):
         """Return whether in defrost mode."""
@@ -463,6 +499,17 @@ class KumoThermostat(CoordinatedKumoEntity, ClimateEntity):
             attr[ATTR_SENSOR_RSSI] = self._sensor_rssi
         if self._runstate is not None:
             attr[ATTR_RUNSTATE] = self._runstate
+        cloud_runtime = self._cloud_runtime()
+        for source_key, attr_key in (
+            ("cloud_power", ATTR_CLOUD_POWER),
+            ("cloud_operation_mode", ATTR_CLOUD_OPERATION_MODE),
+            ("cloud_previous_operation_mode", ATTR_CLOUD_PREVIOUS_OPERATION_MODE),
+            ("cloud_updated_at", ATTR_CLOUD_UPDATED_AT),
+            ("running_state", ATTR_RUNNING_STATE),
+        ):
+            value = cloud_runtime.get(source_key)
+            if value is not None:
+                attr[attr_key] = value
 
         return attr
 

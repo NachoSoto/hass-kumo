@@ -9,6 +9,7 @@ DEFAULT_NAME = "Kumo"
 DOMAIN = "kumo"
 KUMO_DATA = "data"
 KUMO_DATA_COORDINATORS = "coordinators"
+KUMO_CLOUD_RUNTIME_COORDINATOR = "cloud_runtime_coordinator"
 KUMO_CONFIG_CACHE = "kumo_cache.json"
 CONF_PREFER_CACHE = "prefer_cache"
 CONF_CONNECT_TIMEOUT = "connect_timeout"
@@ -20,3 +21,4 @@ DHCP_DISCOVERED_KEY = f"{DOMAIN}_dhcp_discovered"
 PLATFORMS: Final = [Platform.CLIMATE, Platform.SENSOR]
 
 SCAN_INTERVAL = timedelta(seconds=60)
+CLOUD_RUNTIME_SCAN_INTERVAL = timedelta(minutes=5)
