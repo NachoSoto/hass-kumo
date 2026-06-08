@@ -123,13 +123,13 @@ class KumoThermostat(CoordinatedKumoEntity, ClimateEntity):
         "current_humidity",
         "hvac_mode",
         "hot_adjust",
-        "hvac_action",
         "fan_mode",
         "swing_mode",
         "current_temperature",
         "target_temperature",
         "target_temperature_high",
         "target_temperature_low",
+        "hvac_action",
         "battery_percent",
         "filter_dirty",
         "defrost",
@@ -297,6 +297,11 @@ class KumoThermostat(CoordinatedKumoEntity, ClimateEntity):
     def _update_hvac_action(self):
         """Refresh cached hvac action."""
         running_state = self._running_state_from_hot_adjust()
+        if running_state == HVACAction.IDLE:
+            running_state = self._running_state_from_cooling_target()
+        if running_state == HVACAction.COOLING:
+            self._hvac_action = HVACAction.COOLING
+            return
         if running_state == HVACAction.IDLE:
             self._hvac_action = HVACAction.IDLE
             return
@@ -484,8 +489,10 @@ class KumoThermostat(CoordinatedKumoEntity, ClimateEntity):
         return self._running_state
 
     def _update_running_state(self):
-        """Refresh actual running state from hot_adjust and current mode."""
+        """Refresh actual running state from local demand and setpoints."""
         running_state = self._running_state_from_hot_adjust()
+        if running_state == HVACAction.IDLE:
+            running_state = self._running_state_from_cooling_target()
         self._running_state = str(running_state) if running_state is not None else None
 
     def _running_state_from_hot_adjust(self):
@@ -504,6 +511,30 @@ class KumoThermostat(CoordinatedKumoEntity, ClimateEntity):
             return HVACAction.DRYING
         if mode == KUMO_STATE_VENT:
             return HVACAction.FAN
+        return HVACAction.IDLE
+
+    def _running_state_from_cooling_target(self):
+        """Infer cooling when the zone is above its cooling target."""
+        if self._pykumo.get_standby():
+            return HVACAction.IDLE
+
+        if self._hvac_mode not in (HVACMode.COOL, HVACMode.HEAT_COOL):
+            return HVACAction.IDLE
+
+        cooling_target = self._target_temperature_high
+        if cooling_target is None and self._hvac_mode == HVACMode.COOL:
+            cooling_target = self._target_temperature
+        if self._current_temperature is None or cooling_target is None:
+            return HVACAction.IDLE
+
+        try:
+            current_temperature = float(self._current_temperature)
+            cooling_target = float(cooling_target)
+        except (TypeError, ValueError):
+            return HVACAction.IDLE
+
+        if current_temperature > cooling_target:
+            return HVACAction.COOLING
         return HVACAction.IDLE
 
     def _cloud_runtime(self):
