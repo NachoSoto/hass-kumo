@@ -7,7 +7,7 @@
     "dependencies": [],
     "codeowners": [ "@NachoSoto" ],
     "requirements": ["pykumo==0.4.0"],
-    "version": "0.4.2.2",
+    "version": "0.4.2.3",
     "homeassistant": "2024.1.0",
     "iot_class": "local_polling",
     "integration_type": "hub",

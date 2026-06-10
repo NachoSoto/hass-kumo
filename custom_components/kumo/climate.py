@@ -28,6 +28,7 @@ from homeassistant.components.climate.const import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_BATTERY_LEVEL, ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import KUMO_CLOUD_RUNTIME_COORDINATOR, KUMO_DATA, KUMO_DATA_COORDINATORS
 
@@ -118,7 +119,7 @@ async def async_setup_entry(
     async_add_entities(entities, True)
 
 
-class KumoThermostat(CoordinatedKumoEntity, ClimateEntity):
+class KumoThermostat(CoordinatedKumoEntity, ClimateEntity, RestoreEntity):
     """Representation of a Kumo Thermostat device."""
 
     _update_properties = [
@@ -206,6 +207,9 @@ class KumoThermostat(CoordinatedKumoEntity, ClimateEntity):
     async def async_added_to_hass(self):
         """Register cloud runtime updates for this entity."""
         await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None:
+            self._running_state = last_state.attributes.get(ATTR_RUNNING_STATE)
         if self._cloud_runtime_coordinator:
             self.async_on_remove(
                 self._cloud_runtime_coordinator.async_add_listener(self._handle_cloud_runtime_update)
