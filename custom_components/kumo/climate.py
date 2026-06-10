@@ -49,6 +49,8 @@ ATTR_CLOUD_OPERATION_MODE = "cloud_operation_mode"
 ATTR_CLOUD_PREVIOUS_OPERATION_MODE = "cloud_previous_operation_mode"
 ATTR_CLOUD_UPDATED_AT = "cloud_updated_at"
 EVENT_CLOUD_RUNTIME_UPDATED = "kumo_cloud_runtime_updated"
+COOLING_TARGET_HYSTERESIS_F = 1.0
+COOLING_TARGET_HYSTERESIS_C = 0.5
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     {
@@ -296,9 +298,7 @@ class KumoThermostat(CoordinatedKumoEntity, ClimateEntity):
 
     def _update_hvac_action(self):
         """Refresh cached hvac action."""
-        running_state = self._running_state_from_hot_adjust()
-        if running_state == HVACAction.IDLE:
-            running_state = self._running_state_from_cooling_target()
+        running_state = self._inferred_running_state()
         if running_state == HVACAction.COOLING:
             self._hvac_action = HVACAction.COOLING
             return
@@ -490,10 +490,15 @@ class KumoThermostat(CoordinatedKumoEntity, ClimateEntity):
 
     def _update_running_state(self):
         """Refresh actual running state from local demand and setpoints."""
+        running_state = self._inferred_running_state()
+        self._running_state = str(running_state) if running_state is not None else None
+
+    def _inferred_running_state(self):
+        """Return the best available actual runtime signal."""
         running_state = self._running_state_from_hot_adjust()
         if running_state == HVACAction.IDLE:
             running_state = self._running_state_from_cooling_target()
-        self._running_state = str(running_state) if running_state is not None else None
+        return running_state
 
     def _running_state_from_hot_adjust(self):
         """Map the local hotAdjust bit to an actual heat/cool/idle state."""
@@ -514,7 +519,7 @@ class KumoThermostat(CoordinatedKumoEntity, ClimateEntity):
         return HVACAction.IDLE
 
     def _running_state_from_cooling_target(self):
-        """Infer cooling when the zone is above its cooling target."""
+        """Infer cooling from target demand with compressor-style hysteresis."""
         if self._pykumo.get_standby():
             return HVACAction.IDLE
 
@@ -535,7 +540,23 @@ class KumoThermostat(CoordinatedKumoEntity, ClimateEntity):
 
         if current_temperature > cooling_target:
             return HVACAction.COOLING
+        if self._previous_running_state_is(HVACAction.COOLING):
+            stop_temperature = cooling_target - self._cooling_target_hysteresis()
+            if current_temperature > stop_temperature:
+                return HVACAction.COOLING
         return HVACAction.IDLE
+
+    def _cooling_target_hysteresis(self):
+        """Return the target overshoot needed before cooling is considered idle."""
+        if self._use_fahrenheit:
+            return COOLING_TARGET_HYSTERESIS_F
+        return COOLING_TARGET_HYSTERESIS_C
+
+    def _previous_running_state_is(self, action):
+        """Return whether the last persisted running state matches an action."""
+        if self._running_state is None:
+            return False
+        return str(self._running_state) == str(action)
 
     def _cloud_runtime(self):
         if not self._cloud_runtime_coordinator:
