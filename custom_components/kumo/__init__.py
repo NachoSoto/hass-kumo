@@ -13,6 +13,7 @@ from homeassistant.helpers.json import save_json
 
 from .coordinator import KumoDataUpdateCoordinator
 from .cloud_runtime import KumoCloudRuntimeCoordinator
+from .credential_cache import preserve_cached_credentials
 from .const import (
     CONF_CONNECT_TIMEOUT,
     CONF_PREFER_CACHE,
@@ -137,8 +138,16 @@ async def async_kumo_setup_v3(hass: HomeAssistant, username: str, password: str,
         return None
 
     if setup_success:
+        fresh_dict = account.get_raw_json()
+        if not preserve_cached_credentials(fresh_dict, cached_dict):
+            _LOGGER.warning("V3 response has incomplete device credentials; preserving cache")
+            return None
+        # Rebuild the account's parsed units from the completed response without
+        # reaching into pykumo's internal state.
+        account = pykumo.KumoCloudAccount(username, password, kumo_dict=fresh_dict)
+        await hass.async_add_executor_job(account.try_setup)
         await hass.async_add_executor_job(
-            save_json, hass.config.path(KUMO_CONFIG_CACHE), account.get_raw_json()
+            save_json, hass.config.path(KUMO_CONFIG_CACHE), fresh_dict
         )
         _LOGGER.info("Loaded config from V3 API (Comfort app)")
         return account
